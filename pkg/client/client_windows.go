@@ -17,10 +17,13 @@ import (
 	"golift.io/version"
 )
 
+// WaitTime is how long we wait, after startup, before doing an update check.
+const WaitTime = 10 * time.Minute
+
 // This is the pop-up a user sees when they click update in the menu.
 func (c *Client) upgradeWindows(ctx context.Context, update *update.Update) {
 	yes, _ := ui.Question(mnd.Title, "An Update is available! Upgrade Now?\n\n"+
-		"Your Version: "+update.Version+"\n"+
+		"Your Version: "+version.Version+"-"+version.Revision+"\n"+
 		"New Version: "+update.Current+"\n"+
 		"Date: "+update.RelDate.Format("Jan 2, 2006")+mnd.DurationAgo(update.RelDate), false)
 	if yes {
@@ -66,20 +69,25 @@ func (c *Client) AutoWatchUpdate(ctx context.Context) {
 		}
 	}
 
-	c.Print("Auto-updater enabled. Check interval:", durafmt.Parse(dur).String())
+	c.startAutoUpdater(ctx, dur)
+}
 
-	go func() {
-		defer c.CapturePanic()
+func (c *Client) startAutoUpdater(ctx context.Context, dur time.Duration) {
+	pfx := ""
+	if c.Config.UnstableCh {
+		pfx = "Unstable Channel "
+	}
 
-		time.Sleep(update.SleepTime)
-		// Check for update on startup.
-		if err := c.checkAndUpdate(ctx, "startup check"); err != nil {
-			c.Errorf("Startup-Update Failed: %v", err)
-		}
-	}()
+	time.Sleep(WaitTime)
+	c.Print(pfx+"Auto-updater started. Check interval:", durafmt.Parse(dur).String())
+
+	// Check for update on startup.
+	if err := c.checkAndUpdate(ctx, "startup check"); err != nil {
+		c.Errorf("Startup-Update Failed: %v", err)
+	}
 
 	ticker := time.NewTicker(dur)
-	for range ticker.C {
+	for range ticker.C { // the ticker never exits.
 		if err := c.checkAndUpdate(ctx, "automatic"); err != nil {
 			c.Errorf("Auto-Update Failed: %v", err)
 		}
@@ -87,14 +95,25 @@ func (c *Client) AutoWatchUpdate(ctx context.Context) {
 }
 
 func (c *Client) checkAndUpdate(ctx context.Context, how string) error {
-	c.Debugf("Checking GitHub for Update.")
+	var (
+		data *update.Update
+		err  error
+	)
 
-	u, err := update.Check(ctx, mnd.UserRepo, version.Version)
+	//nolint:wsl
+	if c.Config.UnstableCh {
+		c.Debugf("[cron requested] Checking Unstable website for Update.")
+		data, err = update.CheckUnstable(ctx, mnd.DefaultName, version.Revision)
+	} else {
+		c.Debugf("[cron requested] Checking GitHub for Update.")
+		data, err = update.CheckGitHub(ctx, mnd.UserRepo, version.Version)
+	}
+
 	if err != nil {
-		return fmt.Errorf("checking GitHub for update: %w", err)
-	} else if !u.Outdate {
+		return fmt.Errorf("checking for update: %w", err)
+	} else if !data.Outdate {
 		return nil
-	} else if err = c.updateNow(ctx, u, how); err != nil {
+	} else if err = c.updateNow(ctx, data, how); err != nil {
 		return err
 	}
 
@@ -102,7 +121,8 @@ func (c *Client) checkAndUpdate(ctx context.Context, how string) error {
 }
 
 func (c *Client) updateNow(ctx context.Context, u *update.Update, msg string) error {
-	c.Printf("[UPDATE] Downloading and installing update! %s => %s: %s", u.Version, u.Current, u.CurrURL)
+	c.Printf("[UPDATE] Downloading and installing update! %s-%s => %s: %s",
+		version.Version, version.Revision, u.Current, u.CurrURL)
 
 	cmd := &update.Command{
 		URL:    u.CurrURL,

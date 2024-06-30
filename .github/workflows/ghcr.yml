@@ -59,11 +59,14 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: latest=false
           tags: |
-            type=semver,pattern=v{{version}}${{ matrix.docker.sfx }}
-            type=semver,pattern={{version}}${{ matrix.docker.sfx }}
-            type=semver,pattern={{major}}.{{minor}}${{ matrix.docker.sfx }}
-            type=semver,pattern={{major}}${{ matrix.docker.sfx }}
+            type=semver,priority=1010,pattern=latest,enable=${{ matrix.docker.sfx == '' }}
+            type=semver,priority=1010,pattern=${{ matrix.docker.name }},enable=${{ matrix.docker.sfx != '' }}
+            type=semver,priority=1009,pattern={{major}}${{ matrix.docker.sfx }}
+            type=semver,priority=1008,pattern={{major}}.{{minor}}${{ matrix.docker.sfx }}
+            type=semver,priority=1007,pattern={{version}}${{ matrix.docker.sfx }}
+            type=semver,priority=1006,pattern=v{{version}}${{ matrix.docker.sfx }}
             type=ref,enable=true,event=branch,suffix=${{ matrix.docker.sfx }}
 
       # Build and push Docker image with Buildx
